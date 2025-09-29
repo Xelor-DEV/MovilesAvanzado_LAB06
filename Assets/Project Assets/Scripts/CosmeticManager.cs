@@ -20,9 +20,10 @@ public class CosmeticManager : MonoBehaviour
     public CosmeticType type;
     public Button nextButton;
     public Button previousButton;
+    public UIManager uiManager;
 
     private int currentIndex = 0;
-    private int maxIndex = 0;
+    private int maxIndex = 0; 
     private LobbyPlayer localPlayer;
     private bool isInitialized = false;
 
@@ -31,15 +32,13 @@ public class CosmeticManager : MonoBehaviour
         nextButton.onClick.AddListener(OnNextClicked);
         previousButton.onClick.AddListener(OnPreviousClicked);
 
-        // Inicialmente deshabilitar botones hasta que tengamos el jugador local
         nextButton.interactable = false;
         previousButton.interactable = false;
     }
 
     private void Update()
     {
-        // Buscar el jugador local si no está inicializado
-        if (!isInitialized && NetworkManager.Singleton.IsConnectedClient)
+        if (!isInitialized && GameManager.Instance != null && GameManager.Instance.LocalLobbyPlayer != null)
         {
             InitializeWithLocalPlayer();
         }
@@ -47,177 +46,79 @@ public class CosmeticManager : MonoBehaviour
 
     private void InitializeWithLocalPlayer()
     {
-        ulong localClientId = NetworkManager.Singleton.LocalClientId;
+        isInitialized = true;
+        localPlayer = GameManager.Instance.LocalLobbyPlayer;
 
-        if (GameManager.Instance.playersDictionary.TryGetValue(localClientId, out LobbyPlayer player))
-        {
-            localPlayer = player;
-            SetupCosmeticManager();
-        }
-    }
+        Debug.Log($"CosmeticManager ({type}) inicializado.");
 
-    private void SetupCosmeticManager()
-    {
-        if (localPlayer == null) return;
-
-        // Obtener el índice actual y máximo según el tipo
-        switch (type)
-        {
-            case CosmeticType.Body:
-                currentIndex = localPlayer.GetCurrentBodyIndex();
-                maxIndex = localPlayer.GetMaxBodyCount() - 1;
-                localPlayer.BodyIndex.OnValueChanged += OnBodyIndexChanged;
-                break;
-            case CosmeticType.BodyPart:
-                currentIndex = localPlayer.GetCurrentBodyPartIndex();
-                maxIndex = localPlayer.GetMaxBodyPartCount() - 1;
-                localPlayer.BodyPartIndex.OnValueChanged += OnBodyPartIndexChanged;
-                break;
-            case CosmeticType.Eye:
-                currentIndex = localPlayer.GetCurrentEyeIndex();
-                maxIndex = localPlayer.GetMaxEyeCount() - 1;
-                localPlayer.EyeIndex.OnValueChanged += OnEyeIndexChanged;
-                break;
-            case CosmeticType.Glove:
-                currentIndex = localPlayer.GetCurrentGloveIndex();
-                maxIndex = localPlayer.GetMaxGloveCount() - 1;
-                localPlayer.GloveIndex.OnValueChanged += OnGloveIndexChanged;
-                break;
-            case CosmeticType.HeadPart:
-                currentIndex = localPlayer.GetCurrentHeadPartIndex();
-                maxIndex = localPlayer.GetMaxHeadPartCount() - 1;
-                localPlayer.HeadPartIndex.OnValueChanged += OnHeadPartIndexChanged;
-                break;
-            case CosmeticType.MouthAndNose:
-                currentIndex = localPlayer.GetCurrentMouthAndNoseIndex();
-                maxIndex = localPlayer.GetMaxMouthAndNoseCount() - 1;
-                localPlayer.MouthAndNoseIndex.OnValueChanged += OnMouthAndNoseIndexChanged;
-                break;
-            case CosmeticType.Tail:
-                currentIndex = localPlayer.GetCurrentTailIndex();
-                maxIndex = localPlayer.GetMaxTailCount() - 1;
-                localPlayer.TailIndex.OnValueChanged += OnTailIndexChanged;
-                break;
-        }
-
-        // Habilitar botones y actualizar UI
         nextButton.interactable = true;
         previousButton.interactable = true;
 
-        isInitialized = true;
+        switch (type)
+        {
+            case CosmeticType.Body:
+                maxIndex = localPlayer.GetMaxBodyCount();
+                localPlayer.BodyIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentBodyIndex(); // Sincronizar valor inicial
+                break;
+            case CosmeticType.BodyPart:
+                maxIndex = localPlayer.GetMaxBodyPartCount();
+                localPlayer.BodyPartIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentBodyPartIndex();
+                break;
+            case CosmeticType.Eye:
+                maxIndex = localPlayer.GetMaxEyeCount();
+                localPlayer.EyeIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentEyeIndex();
+                break;
+            case CosmeticType.Glove:
+                maxIndex = localPlayer.GetMaxGloveCount();
+                localPlayer.GloveIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentGloveIndex();
+                break;
+            case CosmeticType.HeadPart:
+                maxIndex = localPlayer.GetMaxHeadPartCount();
+                localPlayer.HeadPartIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentHeadPartIndex();
+                break;
+            case CosmeticType.MouthAndNose:
+                maxIndex = localPlayer.GetMaxMouthAndNoseCount();
+                localPlayer.MouthAndNoseIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentMouthAndNoseIndex();
+                break;
+            case CosmeticType.Tail:
+                maxIndex = localPlayer.GetMaxTailCount();
+                localPlayer.TailIndex.OnValueChanged += (prev, next) => { currentIndex = next; };
+                currentIndex = localPlayer.GetCurrentTailIndex();
+                break;
+        }
     }
 
     private void OnNextClicked()
     {
-        if (!isInitialized || localPlayer == null) return;
+        if (maxIndex == 0) return;
 
-        currentIndex = (currentIndex + 1) % (maxIndex + 1);
-        UpdateCosmetic();
+        currentIndex = (currentIndex + 1) % maxIndex;
+        RequestCosmeticChange();
     }
 
     private void OnPreviousClicked()
     {
-        if (!isInitialized || localPlayer == null) return;
+        if (maxIndex == 0) return;
 
-        currentIndex = (currentIndex - 1 + (maxIndex + 1)) % (maxIndex + 1);
-        UpdateCosmetic();
+        currentIndex = (currentIndex - 1 + maxIndex) % maxIndex;
+        RequestCosmeticChange();
     }
 
-    private void UpdateCosmetic()
+    private void RequestCosmeticChange()
     {
-        if (localPlayer != null && NetworkManager.Singleton.IsConnectedClient)
+        if (uiManager != null)
         {
-            GameManager.Instance.ChangeCosmeticRpc(NetworkManager.Singleton.LocalClientId, (int)type, currentIndex);
+            uiManager.ChangeCosmetic((int)type, currentIndex);
         }
-    }
-
-    // Métodos para manejar cambios en los NetworkVariables
-    private void OnBodyIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.Body)
+        else
         {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnBodyPartIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.BodyPart)
-        {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnEyeIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.Eye)
-        {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnGloveIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.Glove)
-        {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnHeadPartIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.HeadPart)
-        {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnMouthAndNoseIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.MouthAndNose)
-        {
-            currentIndex = newValue;
-        }
-    }
-
-    private void OnTailIndexChanged(int oldValue, int newValue)
-    {
-        if (type == CosmeticType.Tail)
-        {
-            currentIndex = newValue;
-
-        }
-    }
-
-    private void OnDestroy()
-    {
-        // Desuscribirse de los eventos cuando se destruye el objeto
-        if (localPlayer != null)
-        {
-            switch (type)
-            {
-                case CosmeticType.Body:
-                    localPlayer.BodyIndex.OnValueChanged -= OnBodyIndexChanged;
-                    break;
-                case CosmeticType.BodyPart:
-                    localPlayer.BodyPartIndex.OnValueChanged -= OnBodyPartIndexChanged;
-                    break;
-                case CosmeticType.Eye:
-                    localPlayer.EyeIndex.OnValueChanged -= OnEyeIndexChanged;
-                    break;
-                case CosmeticType.Glove:
-                    localPlayer.GloveIndex.OnValueChanged -= OnGloveIndexChanged;
-                    break;
-                case CosmeticType.HeadPart:
-                    localPlayer.HeadPartIndex.OnValueChanged -= OnHeadPartIndexChanged;
-                    break;
-                case CosmeticType.MouthAndNose:
-                    localPlayer.MouthAndNoseIndex.OnValueChanged -= OnMouthAndNoseIndexChanged;
-                    break;
-                case CosmeticType.Tail:
-                    localPlayer.TailIndex.OnValueChanged -= OnTailIndexChanged;
-                    break;
-            }
+            Debug.LogError("No se encontró el UIManager en la escena para solicitar el cambio de cosmético.");
         }
     }
 }

@@ -1,26 +1,29 @@
 using System.Collections.Generic;
-using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 public class GameManager : NetworkBehaviour
 {
+    // --- Singleton Pattern ---
     public static GameManager Instance { get; private set; }
 
-    [SerializeField] private int maxPlayers = 5;
-    [SerializeField] private Transform[] spawnPoints;
+    [Header("Network Prefabs")]
     [SerializeField] private GameObject playerPrefab;
 
-    private NetworkVariable<int> playersReady = new NetworkVariable<int>(0);
-    private NetworkVariable<bool> gameStarting = new NetworkVariable<bool>(false);
-    public Dictionary<ulong, LobbyPlayer> playersDictionary = new Dictionary<ulong, LobbyPlayer>(); // Ahora pública
+    [Header("Lobby Settings")]
+    [SerializeField] private Transform[] spawnPoints;
+
+    public Dictionary<ulong, LobbyPlayer> playersDictionary = new Dictionary<ulong, LobbyPlayer>();
+
+    public LobbyPlayer LocalLobbyPlayer { get; private set; }
 
     private void Awake()
     {
         if (Instance == null)
         {
             Instance = this;
+            DontDestroyOnLoad(gameObject); // <-- AÑADE ESTA LÍNEA
         }
         else
         {
@@ -32,172 +35,108 @@ public class GameManager : NetworkBehaviour
     {
         if (IsServer)
         {
-            playersReady.OnValueChanged += OnPlayersReadyChanged;
             NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
             NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
         }
     }
 
+    public void SetLocalPlayer(LobbyPlayer player)
+    {
+        if (player.IsOwner)
+        {
+            LocalLobbyPlayer = player;
+            Debug.Log($"Referencia del jugador local (ID: {player.OwnerClientId}) guardada en GameManager.");
+        }
+        else
+        {
+            Debug.LogWarning($"Se intentó registrar un jugador no local (ID: {player.OwnerClientId}). Operación ignorada.");
+        }
+    }
+
     private void OnClientConnected(ulong clientId)
     {
-        // Spawnear el jugador cuando se conecta
-        SpawnPlayer(clientId);
+        if (!IsServer) return;
+
+        Debug.Log($"Cliente {clientId} conectado. Spawneando su LobbyPlayer...");
+
+        int playerIndex = playersDictionary.Count % spawnPoints.Length;
+        Vector3 spawnPos = spawnPoints.Length > 0 ? spawnPoints[playerIndex].position : Vector3.zero;
+
+        GameObject playerInstance = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
+        playerInstance.GetComponent<NetworkObject>().SpawnAsPlayerObject(clientId, true);
+
+        LobbyPlayer lobbyPlayer = playerInstance.GetComponent<LobbyPlayer>();
+        if (lobbyPlayer != null)
+        {
+            playersDictionary[clientId] = lobbyPlayer;
+        }
     }
 
     private void OnClientDisconnected(ulong clientId)
     {
-        // Remover del diccionario cuando se desconecta
+        if (!IsServer) return;
+
         if (playersDictionary.ContainsKey(clientId))
         {
             playersDictionary.Remove(clientId);
-            UpdateReadyCountRpc();
-        }
-    }
-
-    private void OnPlayersReadyChanged(int oldValue, int newValue)
-    {
-        Debug.Log($"Players ready: {newValue}/{NetworkManager.Singleton.ConnectedClients.Count}");
-    }
-
-    [Rpc(SendTo.Server)]
-    public void JoinAsHostRpc()
-    {
-        if (NetworkManager.Singleton.ConnectedClients.Count > 0)
-        {
-            Debug.Log("Host already exists!");
-            return;
-        }
-
-        NetworkManager.Singleton.StartHost();
-        Debug.Log("Host started");
-    }
-
-    [Rpc(SendTo.Server)]
-    public void JoinAsClientRpc()
-    {
-        if (NetworkManager.Singleton.ConnectedClients.Count >= maxPlayers)
-        {
-            Debug.Log("Lobby is full!");
-            return;
-        }
-
-        if (NetworkManager.Singleton.ConnectedClients.Count == 0)
-        {
-            Debug.Log("No host available!");
-            return;
-        }
-
-        NetworkManager.Singleton.StartClient();
-        Debug.Log("Client joined");
-    }
-
-    private void SpawnPlayer(ulong clientId)
-    {
-        if (!IsServer) return;
-
-        int playerIndex = (int)clientId;
-        Vector3 spawnPos = GetSpawnPosition(playerIndex);
-        GameObject player = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
-        player.GetComponent<NetworkObject>().SpawnAsPlayerObject(clientId, true);
-
-        // Agregar al diccionario después de spawnear
-        StartCoroutine(AddPlayerToDictionaryAfterSpawn(clientId, player));
-    }
-
-    private IEnumerator AddPlayerToDictionaryAfterSpawn(ulong clientId, GameObject playerObject)
-    {
-        // Esperar un frame para asegurar que el componente esté listo
-        yield return null;
-
-        LobbyPlayer lobbyPlayer = playerObject.GetComponent<LobbyPlayer>();
-        if (lobbyPlayer != null)
-        {
-            playersDictionary[clientId] = lobbyPlayer;
-            Debug.Log($"Player {clientId} added to dictionary");
-        }
-        else
-        {
-            Debug.LogError($"LobbyPlayer component not found for client {clientId}");
+            Debug.Log($"Cliente {clientId} desconectado. Jugador eliminado del diccionario.");
         }
     }
 
     [Rpc(SendTo.Server)]
-    public void ToggleReadyRpc(ulong clientId)
+    public void ToggleReadyServerRpc(ulong clientId)
     {
         if (playersDictionary.TryGetValue(clientId, out LobbyPlayer player))
         {
             player.IsReady.Value = !player.IsReady.Value;
-            UpdateReadyCountRpc();
-        }
-        else
-        {
-            Debug.LogWarning($"Player {clientId} not found in dictionary");
+            Debug.Log($"El jugador {clientId} ha cambiado su estado a: {(player.IsReady.Value ? "Listo" : "No Listo")}");
         }
     }
 
     [Rpc(SendTo.Server)]
-    public void UpdateReadyCountRpc()
+    public void ChangeCosmeticServerRpc(ulong clientId, int cosmeticType, int newIndex)
     {
-        int readyCount = 0;
-        foreach (var player in playersDictionary.Values)
+        if (playersDictionary.TryGetValue(clientId, out LobbyPlayer player))
         {
-            if (player.IsReady.Value)
-                readyCount++;
+            player.ServerChangeCosmetic(cosmeticType, newIndex);
         }
-
-        playersReady.Value = readyCount;
-        Debug.Log($"Ready count updated: {readyCount}/{playersDictionary.Count}");
     }
 
     [Rpc(SendTo.Server)]
     public void StartGameRpc(ulong requesterId)
     {
-        if (!IsServer) return;
+        if (!IsServer || requesterId != NetworkManager.ServerClientId) return;
 
-        // Verificar que el que llama es el host
-        if (requesterId != NetworkManager.ServerClientId)
+        bool allPlayersReady = true;
+        if (playersDictionary.Count == 0)
         {
-            Debug.Log("Only host can start the game!");
-            return;
+            allPlayersReady = false;
         }
-
-        // Verificar que todos estén listos
-        bool allReady = true;
-        foreach (var player in playersDictionary.Values)
+        else
         {
-            if (!player.IsReady.Value)
+            foreach (var player in playersDictionary.Values)
             {
-                allReady = false;
-                break;
+                if (!player.IsReady.Value)
+                {
+                    allPlayersReady = false;
+                    break;
+                }
             }
         }
 
-        if (allReady && playersDictionary.Count > 0)
+        if (allPlayersReady)
         {
-            gameStarting.Value = true;
+            Debug.Log("¡Todos los jugadores están listos! Iniciando partida...");
+            foreach (var player in playersDictionary.Values)
+            {
+                player.GetComponent<NetworkObject>().DestroyWithScene = false;
+            }
             NetworkManager.Singleton.SceneManager.LoadScene("Game", LoadSceneMode.Single);
         }
         else
         {
-            Debug.Log("Not all players are ready!");
+            Debug.LogWarning("Se intentó iniciar la partida pero no todos los jugadores estaban listos.");
         }
-    }
-
-    [Rpc(SendTo.Server)]
-    public void ChangeCosmeticRpc(ulong clientId, int cosmeticType, int newIndex)
-    {
-        if (playersDictionary.TryGetValue(clientId, out LobbyPlayer player))
-        {
-            player.ChangeCosmeticRpc(cosmeticType, newIndex);
-        }
-    }
-
-    public Vector3 GetSpawnPosition(int playerIndex)
-    {
-        if (playerIndex < spawnPoints.Length && playerIndex >= 0)
-            return spawnPoints[playerIndex].position;
-
-        return Vector3.zero;
     }
 
     public override void OnNetworkDespawn()
@@ -206,7 +145,7 @@ public class GameManager : NetworkBehaviour
         {
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
-            playersDictionary.Clear();
         }
+        base.OnNetworkDespawn();
     }
 }

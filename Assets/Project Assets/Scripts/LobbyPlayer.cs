@@ -1,9 +1,11 @@
 using Unity.Netcode;
 using TMPro;
 using UnityEngine;
+using System;
 
 public class LobbyPlayer : NetworkBehaviour
 {
+
     public NetworkVariable<bool> IsReady = new NetworkVariable<bool>(false);
     public NetworkVariable<int> BodyIndex = new NetworkVariable<int>(0);
     public NetworkVariable<int> BodyPartIndex = new NetworkVariable<int>(0);
@@ -36,6 +38,14 @@ public class LobbyPlayer : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         // Suscribirse a todos los cambios de NetworkVariables
+
+        if (IsOwner)
+        {
+            // ...me registro en la instancia local del GameManager.
+            GameManager.Instance.SetLocalPlayer(this);
+        }
+
+
         IsReady.OnValueChanged += OnReadyStateChanged;
         BodyIndex.OnValueChanged += OnBodyChanged;
         BodyPartIndex.OnValueChanged += OnBodyPartChanged;
@@ -123,9 +133,10 @@ public class LobbyPlayer : NetworkBehaviour
         UpdateCosmetic(tails, TailIndex.Value, ref currentTail);
     }
 
-    [Rpc(SendTo.Server)]
-    public void ChangeCosmeticRpc(int cosmeticType, int newIndex)
+    public void ServerChangeCosmetic(int cosmeticType, int newIndex)
     {
+        if (!IsServer) return;
+
         switch (cosmeticType)
         {
             case 0:
